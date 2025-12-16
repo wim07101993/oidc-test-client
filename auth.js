@@ -1,87 +1,30 @@
-const pkceCodeVerifierSessionStorageKey = 'oauth_pkce_code_verifier';
-const stateSessionStorageKey = 'oauth_state';
-const idTokenSessionStorageKey = 'id_token';
+import {OidcConfigDbModel} from "./database.js";
 
-const refreshTokenLocalStorageKey = 'refresh_token';
+export const pkceCodeVerifierSessionStorageKey = 'oauth_pkce_code_verifier';
+export const stateSessionStorageKey = 'oauth_state';
+export const idTokenSessionStorageKey = 'id_token';
 
-const codeQueryParamName = 'code';
-const stateQueryParamName = 'state';
+export const codeQueryParamName = 'code';
+export const stateQueryParamName = 'state';
 
-const authConfig = {
-    tokenEndpoint: new URL('http://localhost:8080/oauth/v2/token'),
-    authorizationEndpoint: new URL('http://localhost:8080/oauth/v2/authorize'),
-    userInfoEndpoint: new URL('http://localhost:8080/oidc/v1/userinfo'),
-    endSessionEndpoint: new URL('http://localhost:8080/oidc/v1/end_session'),
-    clientId: '349564292321837244',
-    redirectUri: new URL('http://localhost:37679/'),
-    scopes: ['openid', 'email', 'profile', 'offline_access']
-};
-
+export const invalidStateError = 'did not recognize state';
+export const noCodeVerifier = 'no code verifier in session to use in token exchange';
 
 /**
- * The last received access token.
- * @type {TokenResponse|null} string
+ * @param authConfig {OidcConfigDbModel}
+ * @param accessToken {String}
+ * @returns {Promise<*>}
  */
-let tokenResponse = null;
-
-async function authorize() {
-    if (tokenResponse != null) {
-        return tokenResponse.access_token;
-    }
-
-    const urlParams = new URLSearchParams(window.location.search);
-    const authorizationCode = urlParams.get(codeQueryParamName);
-    const receivedState = urlParams.get(stateQueryParamName);
-
-    const codeVerifier = sessionStorage.getItem(pkceCodeVerifierSessionStorageKey);
-    const createdState = sessionStorage.getItem(stateSessionStorageKey);
-    if (codeVerifier !== null
-        && authorizationCode !== null && authorizationCode.length !== 0
-        && createdState !== null && createdState === receivedState) {
-        tokenResponse = await exchangeAuthorizationCodeForAccessToken(
-            authorizationCode,
-            receivedState,
-            authConfig.tokenEndpoint,
-            authConfig.clientId,
-            authConfig.redirectUri
-        );
-        console.log('received token response', tokenResponse);
-        return tokenResponse.access_token;
-    }
-
-    const refreshToken = localStorage.getItem(refreshTokenLocalStorageKey);
-    if (refreshToken !== null) {
-        tokenResponse = await exchangeRefreshTokenForAccessToken(
-            authConfig.tokenEndpoint,
-            authConfig.clientId,
-            authConfig.redirectUri,
-            authConfig.scopes
-        );
-        console.log('received token response', tokenResponse);
-        return tokenResponse.access_token;
-    }
-
-    await startAuthorizationCodeFlow(
-        authConfig.clientId,
-        authConfig.redirectUri,
-        authConfig.authorizationEndpoint,
-        authConfig.scopes
-    );
-    return null;
+export function getUserInfo(authConfig, accessToken) {
+    return callUserInfoEndpoint(authConfig.userInfoEndpoint, accessToken);
 }
 
-function getUserInfo() {
-    if (tokenResponse == null) {
-        throw 'no token to get user info of, first login, than get user info';
-    }
-    return callUserInfoEndpoint( authConfig.userInfoEndpoint, tokenResponse.access_token);
-}
-
-function logout() {
-    if (tokenResponse == null){
-        throw 'no token to log user off for, first login then logout';
-    }
-    return callEndSessionEndpoint(authConfig.endSessionEndpoint, tokenResponse.access_token);
+/**
+ * @param authConfig {OidcConfigDbModel}
+ * @returns {Promise<any>}
+ */
+export function logout(authConfig) {
+    return callEndSessionEndpoint(authConfig.endSessionEndpoint);
 }
 
 /**
@@ -91,10 +34,10 @@ function logout() {
  *
  * @param clientId {string}
  * @param redirectUri {URL}
- * @param authorizationEndpoint {URL}
- * @param scope {string[]}
+ * @param authorizeEndpoint {URL}
+ * @param scope {string}
  */
-async function startAuthorizationCodeFlow(clientId, redirectUri, authorizationEndpoint, scope) {
+export async function startAuthorizationCodeFlow(clientId, redirectUri, authorizeEndpoint, scope) {
     console.log('start authorization code flow');
     const codeVerifier = generateRandomString(56);
     const codeChallenge = await createCodeChallenge(codeVerifier);
@@ -107,14 +50,14 @@ async function startAuthorizationCodeFlow(clientId, redirectUri, authorizationEn
     const authParams = new URLSearchParams({
         client_id: clientId,
         redirect_uri: redirectUri.toString(),
-        scope: scope.join(' '),
+        scope: scope,
         response_type: 'code',
         code_challenge: codeChallenge,
         code_challenge_method: 'S256',
         state: state
     })
 
-    const authUrl = `${authorizationEndpoint.protocol}//${authorizationEndpoint.host}${authorizationEndpoint.pathname}?${authParams.toString()}`;
+    const authUrl = `${authorizeEndpoint.protocol}//${authorizeEndpoint.host}${authorizeEndpoint.pathname}?${authParams.toString()}`;
     console.log(`navigating for auth: ${authUrl}`);
     window.location.href = authUrl;
 
@@ -130,58 +73,31 @@ async function startAuthorizationCodeFlow(clientId, redirectUri, authorizationEn
  * @param redirectUri {URL}
  * @returns {Promise<TokenResponse>}
  */
-async function exchangeAuthorizationCodeForAccessToken(authorizationCode, receivedState, tokenEndpoint, clientId, redirectUri) {
-    console.log('exchange authorization-code for access-token');
+export async function exchangeAuthorizationCodeForAccessToken(authorizationCode, receivedState, tokenEndpoint, clientId, redirectUri) {
+    try {
+        console.log('exchange authorization-code for access-token');
 
-    if (authorizationCode == null || authorizationCode.length === 0) {
-        throw 'no authorization code to exchange';
+        const createdState = sessionStorage.getItem(stateSessionStorageKey);
+        if (createdState == null || createdState !== receivedState) {
+            throw invalidStateError;
+        }
+
+        const codeVerifier = sessionStorage.getItem(pkceCodeVerifierSessionStorageKey);
+        if (codeVerifier == null) {
+            throw noCodeVerifier;
+        }
+
+        const tokenResponse = await callTokenEndpoint(
+            tokenEndpoint,
+            TokenRequestParams.authorizationCode(clientId, redirectUri, authorizationCode, codeVerifier)
+        );
+
+        sessionStorage.setItem(idTokenSessionStorageKey, tokenResponse.id_token);
+        return tokenResponse;
+    } finally {
+        sessionStorage.removeItem(pkceCodeVerifierSessionStorageKey);
+        sessionStorage.removeItem(stateSessionStorageKey);
     }
-
-    const codeVerifier = sessionStorage.getItem(pkceCodeVerifierSessionStorageKey);
-    if (codeVerifier == null) {
-        throw 'no code verifier in session to use in token exchange';
-    }
-
-    const createdState = sessionStorage.getItem(stateSessionStorageKey);
-    if (createdState == null || createdState !== receivedState) {
-        throw 'received no state to verify the redirect callback by';
-    }
-
-    const tokenResponse = await callTokenEndpoint(
-        tokenEndpoint,
-        TokenRequestParams.authorizationCode(clientId, redirectUri, authorizationCode, codeVerifier)
-    );
-
-    localStorage.setItem(refreshTokenLocalStorageKey, tokenResponse.refresh_token);
-    sessionStorage.setItem(idTokenSessionStorageKey, tokenResponse.id_token);
-    sessionStorage.removeItem(pkceCodeVerifierSessionStorageKey);
-    sessionStorage.removeItem(stateSessionStorageKey);
-    return tokenResponse;
-}
-
-/**
- * @param tokenEndpoint {URL}
- * @param clientId {string}
- * @param redirectUri {URL}
- * @param scopes {string[]}
- * @returns {Promise<TokenResponse>}
- */
-async function exchangeRefreshTokenForAccessToken(tokenEndpoint, clientId, redirectUri, scopes) {
-    console.log('exchange refresh-token for access-token')
-
-    const refreshToken = localStorage.getItem(refreshTokenLocalStorageKey);
-    if (refreshToken == null || refreshToken.length === 0) {
-        throw 'no refresh token to exchange for access token';
-    }
-
-    const tokenResponse = await callTokenEndpoint(
-        tokenEndpoint,
-        TokenRequestParams.refreshToken(clientId, redirectUri, scopes, refreshToken)
-    );
-
-    localStorage.setItem(refreshTokenLocalStorageKey, tokenResponse.refresh_token);
-    sessionStorage.setItem(idTokenSessionStorageKey, tokenResponse.id_token);
-    return tokenResponse;
 }
 
 /**
@@ -248,6 +164,26 @@ async function callEndSessionEndpoint(endSessionEndpoint, clientId, accessToken)
     return await response.json();
 }
 
+export async function callDiscoveryEndpoint(discoveryEndpoint) {
+    const response = await fetch(discoveryEndpoint, {
+        method: 'GET',
+    });
+
+    if (response.status >= 500) {
+        throw `failed to call end discovery endpoint (server error): ${response.status} ${response.statusText}: ${await response.text()}`;
+    } else if (response.status >= 400) {
+        throw `failed to call end discovery endpoint: ${response.status} ${response.statusText}: ${await response.text()}`;
+    }
+
+    const document = await response.json();
+    return new DiscoveryDocument(
+        document["authorization_endpoint"],
+        document["token_endpoint"],
+        document["userinfo_endpoint"],
+        document["end_session_endpoint"]
+    );
+}
+
 /**
  * @param {number} length is the length of requested string
  * @returns {string} A random string ([A-Za-z0-9]+)
@@ -300,6 +236,29 @@ async function sha256(input) {
         });
     }
     return CryptoJS.SHA256(input).toString(CryptoJS.enc.Hex);
+}
+
+/**
+ * @param input {string}
+ * @returns {string}
+ */
+function base64Decode(input){
+    // Replace non-url compatible chars with base64 standard chars
+    input = input
+        .replace(/-/g, '+')
+        .replace(/_/g, '/');
+
+    // Pad out with standard base64 required padding characters
+    const pad = input.length % 4;
+    if(pad) {
+        if(pad === 1) {
+            throw new Error('InvalidLengthError: Input base64url string is the wrong length to determine padding');
+        }
+        input += new Array(5-pad).join('=');
+    }
+
+    const a =  atob(input);
+    return a;
 }
 
 // ----------------------------------------------------------------------------
@@ -369,7 +328,7 @@ class TokenRequestParams {
     /**
      * @param clientId {string}
      * @param redirectUrl {URL}
-     * @param scope {string[]}
+     * @param scope {string}
      * @param refreshToken {string}
      */
     static refreshToken(clientId, redirectUrl, scope, refreshToken) {
@@ -381,10 +340,50 @@ class TokenRequestParams {
             client_id: this.clientId,
             grant_type: this.grantType,
             redirect_uri: this.redirectUri.toString(),
-            scope: this.scope?.join(' '),
+            scope: this.scope,
             refresh_token: this.refreshToken,
             code: this.code,
             code_verifier: this.codeVerifier,
         });
+    }
+}
+
+class DiscoveryDocument {
+    constructor(authorizationEndpoint, tokenEndpoint, userInfoEndpoint, endSessionEndpoint) {
+        this.authorizationEndpoint = authorizationEndpoint;
+        this.tokenEndpoint = tokenEndpoint;
+        this.userInfoEndpoint = userInfoEndpoint;
+        this.endSessionEndpoint = endSessionEndpoint;
+    }
+}
+
+export class Jwt {
+    /**
+     * @param encoded {string}
+     * @param header {string}
+     * @param payload {string}
+     * @param signature {string}
+     */
+    constructor(encoded, header, payload, signature) {
+        this.encoded = encoded;
+        this.header = header;
+        this.payload = payload;
+        this.signature = signature
+    }
+
+    /**
+     * @param encoded {string}
+     */
+    static parse(encoded) {
+        const split = encoded.split('.');
+
+        const headerJson = base64Decode(split[0]);
+        const payloadJson = base64Decode(split[1]);
+        return new Jwt(
+            encoded,
+            JSON.parse(headerJson),
+            JSON.parse(payloadJson),
+            split[2]
+        );
     }
 }

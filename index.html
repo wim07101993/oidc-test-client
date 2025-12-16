@@ -3,12 +3,66 @@
 <head>
     <meta charset="UTF-8">
     <title>OIDC Test app</title>
+    <style>
+        form {
+            display: grid;
+            grid-template-columns:max-content auto max-content;
+        }
+
+        form > * {
+            margin-left: 4px;
+            margin-top: 4px;
+        }
+    </style>
 </head>
 <body>
 
-<button onclick="authorize()">Login</button>
-<button onclick="logout()">Logout</button>
+<label for="availableOidcConfigsSelector">Available oidc Configs</label>
+<select id="availableOidcConfigsSelector"></select>
+<input type="button" id="loadConfigButton" value="Load">
+<br>
+<br>
+<form id="openIdConfigForm">
+    <label for="discoveryEndpointInput" style="grid-column: 1;">Discover Endpoint</label>
+    <input type="url" aria-label="discoveryEndpoint" id="discoveryEndpointInput">
+
+    <button id="discoverButton">Discover</button>
+
+    <label for="authEndpointInput" style="grid-column: 1;">Authorization Endpoint</label>
+    <input type="url" aria-label="authEndpoint" id="authEndpointInput"/>
+    <label for="tokenEndpointInput" style="grid-column: 1;">Token Endpoint</label>
+    <input type="url" aria-label="tokenEndpoint" id="tokenEndpointInput"/>
+    <label for="userInfoEndpointInput" style="grid-column: 1;">User info Endpoint</label>
+    <input type="url" aria-label="userInfoEndpoint" id="userInfoEndpointInput"/>
+    <label for="endSessionEndpointInput" style="grid-column: 1;">End session Endpoint</label>
+    <input type="url" aria-label="endSessionEndpoint" id="endSessionEndpointInput"/>
+    <label for="clientIdInput" style="grid-column: 1;">Client id</label>
+    <input type="text" aria-label="clientId" id="clientIdInput"/>
+    <label for="redirectUriInput" style="grid-column: 1;">RedirectUri</label>
+    <input type="url" aria-label="redirectUri" id="redirectUriInput"/>
+    <label for="scopesInput" style="grid-column: 1;">Scopes</label>
+    <input type="text" aria-label="scopes" id="scopesInput"/>
+
+    <br>
+    <label for="oidcConfigName">Oidc Config name</label>
+    <input type="text" aria-label="oidc config name" id="oidcConfigName">
+    <input type="button" aria-label="save" id="saveConfigurationButton" value="Save configuration">
+</form>
+
+<br>
+
+<button id="authorizeButton">Authorize</button>
+<button id="endSessionButton">End session</button>
+
+<h1>TokenResponse</h1>
+<code id="tokenResponse"></code>
+<h1>AccessToken</h1>
+<code id="accessToken"></code>
+<h1>IdToken</h1>
+<code id="idToken"></code>
+<h1>User info</h1>
+<code id="userInfoText"></code>
 </body>
-<script src="auth.js"></script>
-<script src="index.js"></script>
+
+<script src="index.js" type="module"></script>
 </html>
