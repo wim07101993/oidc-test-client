@@ -108,13 +108,19 @@ export async function exchangeAuthorizationCodeForAccessToken(authorizationCode,
  * @param authParams {TokenRequestParams} parameters to add to the request
  * @returns {Promise<TokenResponse>}
  */
-async function callTokenEndpoint(tokenEndpoint, authParams) {
+export async function callTokenEndpoint(tokenEndpoint, authParams) {
     console.log()
-    const response = await fetch(tokenEndpoint, {
+
+    const init = {
         method: 'POST',
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
         body: authParams.toUrlSearchParams().toString(),
-    });
+    }
+    if (authParams.clientSecret != null) {
+        init.headers['Authorization'] = basicAuthHeaderValue(authParams.clientId, authParams.clientSecret);
+    }
+
+    const response = await fetch(tokenEndpoint, init);
 
     if (response.status >= 500) {
         throw `failed to call token endpoint (server error): ${response.status} ${response.statusText}: ${await response.text()}`;
@@ -130,7 +136,7 @@ async function callTokenEndpoint(tokenEndpoint, authParams) {
  * @param accessToken {string}
  * @returns {Promise<any>}
  */
-async function callUserInfoEndpoint(userInfoEndpoint, accessToken) {
+export async function callUserInfoEndpoint(userInfoEndpoint, accessToken) {
     const response = await fetch(userInfoEndpoint, {
         method: 'GET',
         headers: {
@@ -147,7 +153,7 @@ async function callUserInfoEndpoint(userInfoEndpoint, accessToken) {
     return await response.json();
 }
 
-async function callEndSessionEndpoint(endSessionEndpoint, clientId, accessToken) {
+export async function callEndSessionEndpoint(endSessionEndpoint, clientId, accessToken) {
     const response = await fetch(endSessionEndpoint, {
         method: 'GET',
         headers: {
@@ -182,6 +188,17 @@ export async function callDiscoveryEndpoint(discoveryEndpoint) {
         document["userinfo_endpoint"],
         document["end_session_endpoint"]
     );
+}
+
+/**
+ * @param userName {string}
+ * @param password {string}
+ */
+export function basicAuthHeaderValue(userName, password) {
+    userName = encodeURI(userName);
+    password = encodeURI(password);
+    const base64 = btoa(`${userName}:${password}`);
+    return `Basic ${base64}`;
 }
 
 /**
@@ -242,7 +259,7 @@ async function sha256(input) {
  * @param input {string}
  * @returns {string}
  */
-function base64Decode(input){
+function base64Decode(input) {
     // Replace non-url compatible chars with base64 standard chars
     input = input
         .replace(/-/g, '+')
@@ -250,15 +267,14 @@ function base64Decode(input){
 
     // Pad out with standard base64 required padding characters
     const pad = input.length % 4;
-    if(pad) {
-        if(pad === 1) {
+    if (pad) {
+        if (pad === 1) {
             throw new Error('InvalidLengthError: Input base64url string is the wrong length to determine padding');
         }
-        input += new Array(5-pad).join('=');
+        input += new Array(5 - pad).join('=');
     }
 
-    const a =  atob(input);
-    return a;
+    return atob(input);
 }
 
 // ----------------------------------------------------------------------------
@@ -288,18 +304,20 @@ class TokenResponse {
 /**
  * Request with which a token can be requested from the IDP.
  */
-class TokenRequestParams {
+export class TokenRequestParams {
     /**
      * @param client_id {string}
-     * @param grant_type {"refresh_token"|"authorization_code"}
-     * @param redirect_uri {URL}
-     * @param scope {string[]|null}
+     * @param client_secret {string|null}
+     * @param grant_type {"refresh_token"|"authorization_code"|"client_credentials"}
+     * @param redirect_uri {URL|null}
+     * @param scope {string|null}
      * @param refresh_token {string|null}
      * @param code {string|null}
      * @param code_verifier {string|null}
      */
     constructor(
         client_id,
+        client_secret,
         grant_type,
         redirect_uri,
         scope,
@@ -307,6 +325,7 @@ class TokenRequestParams {
         code,
         code_verifier) {
         this.clientId = client_id;
+        this.clientSecret = client_secret;
         this.grantType = grant_type;
         this.redirectUri = redirect_uri;
         this.scope = scope;
@@ -322,7 +341,7 @@ class TokenRequestParams {
      * @param codeVerifier {string}
      */
     static authorizationCode(clientId, redirectUrl, code, codeVerifier) {
-        return new TokenRequestParams(clientId, 'authorization_code', redirectUrl, null, null, code, codeVerifier);
+        return new TokenRequestParams(clientId, null, 'authorization_code', redirectUrl, null, null, code, codeVerifier);
     }
 
     /**
@@ -332,14 +351,25 @@ class TokenRequestParams {
      * @param refreshToken {string}
      */
     static refreshToken(clientId, redirectUrl, scope, refreshToken) {
-        return new TokenRequestParams(clientId, 'refresh_token', redirectUrl, scope, refreshToken, null, null);
+        return new TokenRequestParams(clientId, null, 'refresh_token', redirectUrl, scope, refreshToken, null, null);
+    }
+
+    /**
+     * @param clientId {string}
+     * @param clientSecret {string}
+     * @param scope {string}
+     * @returns {TokenRequestParams}
+     */
+    static clientCredentials(clientId, clientSecret, scope) {
+        return new TokenRequestParams(clientId, clientSecret, 'client_credentials', null, scope, null, null, null);
     }
 
     toUrlSearchParams() {
         return new URLSearchParams({
             client_id: this.clientId,
+            client_secret: this.clientSecret,
             grant_type: this.grantType,
-            redirect_uri: this.redirectUri.toString(),
+            redirect_uri: this.redirectUri == null ? null : this.redirectUri.toString(),
             scope: this.scope,
             refresh_token: this.refreshToken,
             code: this.code,
@@ -348,7 +378,7 @@ class TokenRequestParams {
     }
 }
 
-class DiscoveryDocument {
+export class DiscoveryDocument {
     constructor(authorizationEndpoint, tokenEndpoint, userInfoEndpoint, endSessionEndpoint) {
         this.authorizationEndpoint = authorizationEndpoint;
         this.tokenEndpoint = tokenEndpoint;
